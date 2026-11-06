@@ -1,11 +1,11 @@
 ---
 name: summarize-slides
-description: Use when the user wants to summarize a lecture PDF, course slides, or课件 into复习资料, 考点总结, 公式/概念速查表, or an exam-oriented cheat sheet PDF with page-cited key points, formulas, concepts, examples, and study guidance.
+description: Use when the user wants to summarize a lecture PDF, course slides, 课件, or a lecture PDF plus corresponding online-class subtitle/transcript txt into复习资料, 考点总结, 公式/概念速查表, or an exam-oriented cheat sheet PDF with page-cited key points, transcript-backed teacher explanations, formulas, concepts, examples, and study guidance.
 ---
 
 # Summarize Slides
 
-Turn a long lecture PDF into a concise, exam-oriented LaTeX cheat sheet and compiled PDF with accurate page references, bilingual terminology, and only the diagrams that materially improve understanding.
+Turn a long lecture PDF, optionally paired with the teacher's online-class subtitle/transcript `.txt`, into a concise, exam-oriented LaTeX cheat sheet and compiled PDF with accurate page references, transcript-backed explanations, bilingual terminology, and only the diagrams that materially improve understanding.
 
 **Core principle:** treat slide summarization as a controller workflow for long documents: read globally first, segment by lecture or topic, dispatch focused readers for each segment, merge into a single cheat-sheet draft, then run a fresh coverage verifier before building final artifacts.
 
@@ -17,6 +17,9 @@ Turn a long lecture PDF into a concise, exam-oriented LaTeX cheat sheet and comp
 - Default deliverables are `.tex` and compiled `.pdf`, with the PDF treated as the required final artifact unless the user explicitly asks not to produce it, and the default compiled PDF path requires `xelatex`.
 - When this skill applies, a chat-only or inline summary is **not** a successful final deliverable unless the user explicitly asks for summary-only output or explicitly opts out of file creation.
 - If the user gives parsed text, OCR text, extracted images, or page-by-page content originating from a lecture PDF instead of the raw PDF file, treat it as the same slide-summarization task and still produce the document artifacts by default.
+- If the user provides a lecture subtitle, transcript, 网课字幕, 逐字稿, or `.txt` file corresponding to the PDF, treat it as companion source material for the same slide-summarization task rather than as a separate text-summary task.
+- When a companion transcript exists, use the PDF as the structural and page-citation backbone, and use the transcript to recover teacher emphasis, oral explanations, worked-example commentary, exam hints, and clarifications that are missing or terse on slides.
+- Do not let transcript content override PDF page references unless there is a clear source conflict. If the transcript adds useful material that cannot be mapped to a slide page, cite it as transcript-derived and explain the mapping uncertainty briefly.
 - By default, place all generated artifacts in a single folder named `Summary - <pdf-stem>` inside the same directory that contains the source PDF. Do not scatter `.tex`, `.pdf`, helper assets, or intermediate files elsewhere.
 - This containment rule is strict: create the output folder before any extraction, note-taking, OCR, or build step, and write every generated file into that folder from the start.
 - Extracted text files are included in this rule. Files such as `<pdf-stem>_full.txt`, `<pdf-stem>_p1-5.txt`, OCR dumps, page-range extracts, verifier notes saved to disk, temporary LaTeX snippets, and any other intermediate `.txt`, `.md`, `.json`, `.tex`, image, or helper outputs must live inside `Summary - <pdf-stem>` only.
@@ -47,6 +50,7 @@ The default successful outcome for this skill is:
 - a saved LaTeX source file named `Summary - <pdf-stem>.tex`
 - a compiled PDF file named `Summary - <pdf-stem>.pdf`
 - all generated files grouped in one output folder named `Summary - <pdf-stem>` inside the same directory as the source PDF unless the user explicitly requested another location
+- if a companion transcript is used, the final document integrates the transcript's useful teacher explanations, examples, and emphasis with the slide-derived content instead of summarizing the PDF alone
 - no generated intermediate, extracted-text, OCR, notes, or helper files left outside that output folder
 - a final response that reports the artifact paths and any blockers encountered
 
@@ -82,12 +86,20 @@ Use this skill when the user wants any of the following from a PDF slide deck, l
 - 总结 lecture PDF
 - 总结 slides
 - 提炼课程讲义里的重点
+- 把 PDF 课件和对应网课字幕 txt 结合起来总结
+- 用老师上课字幕/逐字稿补充课件总结
 
 Common trigger words and phrases:
 
 - 课件
 - slides
 - lecture PDF
+- subtitle txt
+- transcript txt
+- 网课字幕
+- 逐字稿
+- PDF + 字幕
+- PDF + txt
 - 复习资料
 - 考点总结
 - 总结一下这个课件
@@ -141,6 +153,7 @@ This section replaces the need for any separate parallel-dispatch skill.
 digraph summarize_slides_flow {
     "Intake" [shape=box];
     "Read PDF globally" [shape=box];
+    "Read companion transcript if available" [shape=box];
     "Segment by lecture/topic" [shape=box];
     "Dispatch segment readers" [shape=box];
     "Collect per-segment notes" [shape=box];
@@ -154,7 +167,8 @@ digraph summarize_slides_flow {
     "Report result" [shape=doublecircle];
 
     "Intake" -> "Read PDF globally";
-    "Read PDF globally" -> "Segment by lecture/topic";
+    "Read PDF globally" -> "Read companion transcript if available";
+    "Read companion transcript if available" -> "Segment by lecture/topic";
     "Segment by lecture/topic" -> "Dispatch segment readers";
     "Dispatch segment readers" -> "Collect per-segment notes";
     "Collect per-segment notes" -> "Merge into cheat-sheet draft";
@@ -172,6 +186,14 @@ digraph summarize_slides_flow {
 ## Step 1. Intake
 
 - Confirm the source PDF path, or if no raw PDF is available, confirm the source-derived input and the naming basis for outputs.
+- Detect whether the user supplied, mentioned, or implied a companion subtitle/transcript `.txt`.
+- If the user supplied both a PDF and one or more `.txt` files, pair them before reading:
+  - exact same stem first, such as `Lecture 03.pdf` with `Lecture 03.txt`
+  - otherwise same directory plus the closest normalized stem match
+  - otherwise use the user's explicit pairing instruction
+  - if multiple plausible `.txt` files match one PDF and the pairing is ambiguous, ask for clarification before summarizing
+- If the user supplied a PDF only, do not block the workflow waiting for subtitles. Continue with PDF-only mode unless the user explicitly said the transcript must be included.
+- If the user supplied a transcript only and no PDF/source-derived slide content, this skill is not fully triggered unless the user frames it as source-derived lecture material. Ask for the PDF if page-cited slide output is expected.
 - Confirm the output directory if the user already specified one.
 - Determine expected outputs: `.tex`, `.pdf`, or both. Default is both, and the PDF is the required final artifact unless the user explicitly opts out of PDF output.
 - Determine whether the user wants the whole deck or a subset. Default is the whole deck.
@@ -188,11 +210,13 @@ Default style unless the user says otherwise:
 - purpose: exam review
 - tone: concise, clear, non-verbose
 - output: `Summary - <pdf-stem>.tex` and `Summary - <pdf-stem>.pdf` inside the folder `Summary - <pdf-stem>` that sits in the same directory as the source PDF
+- transcript usage: integrate useful teacher explanations and exam hints from the matching `.txt`, while keeping the PDF as the primary structure and citation source
 
 ## Step 2. Check Build Environment
 
 - Verify `xelatex` exists before promising the default required compiled PDF.
 - The default Chinese-first compiled PDF workflow requires `xelatex` for Chinese text and math.
+- Compile a short sample with Chinese text, a formula and the intended font before choosing a template. On macOS, if `ctexart` or `xeCJK` is missing, try `article` with `fontspec` and an installed CJK font for Chinese text. Render a sample page to check glyphs, line breaks and formulas before using that fallback in the final PDF.
 - If `xelatex` is missing, stop and report that the environment prerequisite for the default required PDF output is missing unless the user explicitly changes the output expectation away from compiled PDF. Do not stop at `.tex` only when PDF output is still required.
 
 ## Step 3. Read the PDF Globally First
@@ -200,9 +224,27 @@ Default style unless the user says otherwise:
 Do not jump straight into chunk summaries.
 
 - If any extracted text, OCR output, or saved notes are written to disk during this step, they must be written inside the output folder, never beside the source PDF.
+- If a companion transcript is available, copy or normalize any transcript-derived working notes inside the output folder only. Do not write cleaned transcript files beside the source PDF.
 - Read enough of the whole PDF to understand its macro-structure.
 - Identify title pages, agenda pages, lecture separators, topic transitions, and summary slides.
 - Build a segmentation map before deep reading.
+
+## Step 3A. Read the Companion Transcript When Available
+
+Use this step only when a matching subtitle/transcript `.txt` exists.
+
+- Treat the transcript as a companion source, not as the primary outline. The PDF still determines lecture structure, page ranges, and the default final organization.
+- Inspect the transcript's format before summarizing. Common acceptable formats include plain text, timestamped `.txt`, copied subtitle text, and transcript exports with speaker/time markers.
+- Preserve useful timing markers if they exist. If timestamps are absent, use short transcript line ranges or nearby section headings for traceability.
+- Identify transcript material that adds value beyond the slides:
+  - teacher emphasis such as "exam focus", "remember this", "common mistake", or repeated warnings
+  - oral explanations of formulas, derivations, or diagrams
+  - worked-example commentary and problem-solving heuristics
+  - clarifications of terse slide bullets
+  - course-specific terminology translations or naming conventions
+- Do not import transcript filler such as greetings, attendance comments, platform chatter, long digressions, or repeated auto-caption errors unless it changes the academic content.
+- If the transcript seems misaligned with the PDF, belongs to a different lecture, or has severe automatic-caption errors that affect formulas or terminology, stop and report the blocker instead of mixing unreliable sources.
+- Create a transcript-to-slide alignment note before segment reading. The alignment may be coarse, but it must state how transcript portions map to PDF sections or why exact mapping is unavailable.
 
 For very long decks, segmentation plus per-segment reading is mandatory. Do not summarize a few-hundred-page deck in one shot.
 
@@ -217,6 +259,8 @@ For long decks, the controller must first produce:
 - a segmentation map covering the full page range
 
 The segmentation map must cover all pages exactly once unless a page is explicitly marked as intentionally excluded, such as a duplicate title slide or blank separator page.
+
+When transcript material is available, the segmentation map should also attach the relevant transcript time ranges, line ranges, or section markers to each PDF page segment whenever possible. If exact alignment is impossible, keep the transcript ranges at lecture/topic granularity and mark them as approximate.
 
 ## Step 4. Segment the Deck
 
@@ -249,6 +293,7 @@ Each segment-reader should return exactly these sections:
 - `key concepts with English terms`
 - `important examples or recurring problem patterns`
 - `problem-solving techniques or pitfalls`
+- `teacher transcript additions`
 - `figure candidates if any`
 - `coverage concerns or uncertainty`
 
@@ -257,6 +302,7 @@ Segment readers are not allowed to:
 - write the final document
 - decide the final layout
 - skip page references casually
+- treat transcript-only statements as slide-cited facts without an alignment note
 - collapse the work into a generic prose summary
 
 ## Step 6. Merge into Cheat-Sheet Draft
@@ -272,6 +318,7 @@ Every major block should try to include:
 - why it matters or when it appears in problems
 - one representative example pattern if useful
 - one practical solving hint if useful
+- teacher emphasis, oral clarifications, or transcript-only exam hints when they materially improve review value
 
 ## Style Rules for the Draft
 
@@ -291,6 +338,9 @@ Every major block should try to include:
 - Use short page ranges only when one idea truly spans several nearby slides.
 - Do not downgrade to very broad section-level ranges just to save effort.
 - If page mapping is uncertain because extraction is ambiguous, say so explicitly and resolve it before finalizing. Missing citations are acceptable only when extraction failure is explicitly reported.
+- When a point is strengthened by transcript material, keep the slide page citation and optionally add a compact transcript marker such as `字幕 12:34-13:10` or `字幕 lines 88-104`.
+- When a useful point comes only from the transcript and cannot be confidently mapped to a slide page, label it as `字幕补充` with the tightest available timestamp or line range. Do not invent a PDF page citation.
+- Avoid flooding the final cheat sheet with transcript citations. Use transcript markers where they add traceability for teacher-specific explanations, examples, warnings, or exam hints.
 
 ## Figure Rules
 
@@ -335,12 +385,15 @@ The verifier must check all of the following:
 - the verifier has checked the draft against the source PDF or source-derived page data rather than reviewing the draft alone
 - cited pages or page ranges match the summarized concept or formula in sampled checks
 - each segment in the segmentation map is represented in the final draft or explicitly justified as intentionally omitted
+- if a companion transcript was provided, the draft includes the useful transcript-only explanations, examples, teacher emphasis, and exam hints rather than ignoring the transcript
+- transcript-derived claims are either aligned to PDF pages or clearly labeled with transcript timestamps/line ranges
 
 The verifier must return exactly these sections:
 
 - `verdict` with one of: `APPROVED`, `APPROVED_WITH_NOTES`, `REJECTED`
 - `coverage findings`
 - `style and fidelity findings`
+- `transcript integration findings`
 - `missing or weak areas`
 
 If the verifier reports missing coverage, weak page citations, missing English labels, missing high-value examples, or source-drift concerns, fix the draft and re-run verification.
@@ -356,6 +409,7 @@ Do not move to LaTeX writing until:
 - page references are present and coherent for the summarized points, unless an explicit extraction failure note exists
 - bilingual terminology is in place
 - verifier verdict is `APPROVED`
+- if a transcript was provided, transcript integration was checked and transcript-derived additions are marked or aligned clearly
 
 If the verifier returns `APPROVED_WITH_NOTES`, resolve the notes and run a fresh verifier pass. Do not move to LaTeX writing on a stale verifier verdict.
 
@@ -416,6 +470,7 @@ Use deterministic names based on the source PDF stem:
 - final PDF: `Summary - <pdf-stem>.pdf`
 - any helper or intermediate generated files: keep them in the same folder and give them names derived from `<pdf-stem>` rather than generic names like `output.*` or `temp.*`
 - extracted text and preprocessing files: save them inside that same folder with deterministic names such as `<pdf-stem>_full.txt`, `<pdf-stem>_p1-5.txt`, `<pdf-stem>_notes.md`, or similar; never place them in the source PDF directory
+- transcript normalization or alignment files: save them inside that same folder with deterministic names such as `<pdf-stem>_transcript_clean.txt`, `<pdf-stem>_transcript_alignment.md`, or `<pdf-stem>_transcript_notes.md`; never place them in the source PDF directory
 
 If the user specifies a custom output path or filename, follow that instead.
 
@@ -470,6 +525,9 @@ If no source PDF path exists, apply the fallback naming rule from `Required Outc
 - claiming completion based on intended steps instead of executed steps
 - generated files spread across the original PDF directory instead of one `Summary - <pdf-stem>` folder
 - extracted `.txt` files or other preprocessing artifacts appearing beside the source PDF
+- companion subtitle/transcript `.txt` ignored even though the user supplied it
+- transcript-only hints presented as PDF-cited slide facts without alignment
+- auto-caption errors copied into formulas or terminology without verification
 - no verifier pass after merge
 - figures omitted despite clear conceptual need
 - unreadable compressed formatting justified as `cheat sheet`
